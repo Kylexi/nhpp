@@ -1,0 +1,6 @@
+# Ignore these files/paths
+build/
+__pycache__/
+dist/
+pyproject.toml
+nhpp.egg-info/
