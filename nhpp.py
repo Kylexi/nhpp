@@ -60,8 +60,38 @@ EXAMPLE USAGE:
 19.54
 """
 
+def _get_piecewise_val(knots, t):
+	"""
+	Based on the knots specified for a piecewise linear function
+	and a point in the domain 't', return the value of the piecewise
+	linear function.
 
-def get_arrivals(knots):
+	knots: dictionary where keys and values should all be numeric.
+	t: numeric within the domain specified by the knots.
+
+	returns: float
+	"""
+	knots = {i: knots[i] for i in sorted(knots.keys())}
+
+	knot_times = list(knots.keys())
+	knot_vals = list(knots.values())
+
+	if t < knot_times[0] or t > knot_times[-1]:
+		raise ValueError(f"Cannot determine piecewise value for t={t}")
+
+	s = []
+
+	for i in range(1, len(knot_times)):
+		s.append((knot_vals[i] - knot_vals[i-1]) / 
+			(knot_times[i] - knot_times[i-1]))
+
+	j = 0
+	while knot_times[j+1] < t:
+		j += 1
+	return knot_vals[j] + s[j]*(t - knot_times[j])
+
+
+def get_arrivals(knots, func=None, *func_args, **func_kwargs):
 	"""
 	Generate a sequence from nonhomogeneous Poisson process
 	specified by a piecewise linear function determine from
@@ -69,6 +99,8 @@ def get_arrivals(knots):
 	pairings of each segment of the piecewise function.
 
 	knots: dictionary where keys and values should all be numeric.
+
+	returns: list of floats
 	"""
 	a = [0] # Arrival times for nonhomogeneous poisson process
 	u = [0] # Arrival times for homogeneous poisson process 
@@ -108,6 +140,22 @@ def get_arrivals(knots):
 		while L[j+1] < u_next and j < len(knot_times):
 			j += 1
 		a_next = inv_int_rate_func(u_next, j)
-		a.append(a_next)
-		u.append(u_next)
+		if func:
+			ind_unif = np.random.uniform(0,1)
+			prob_ratio = func(a_next, *func_args, **func_kwargs) / _get_piecewise_val(knots, a_next)
+			if prob_ratio > 1:
+				print('issue')
+			if ind_unif < prob_ratio:
+				a.append(a_next)
+			u.append(u_next)
+
+		else:
+			a.append(a_next)
+			u.append(u_next)
 	return a
+
+# import math
+# knots = {0:3, math.pi/2: 9, math.pi: 3, 3*math.pi/2: 0, 2*math.pi: 3}
+# def test_func(t):
+# 	return 3*np.sin(t) + 3
+# print(get_arrivals(knots, test_func))
