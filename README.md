@@ -31,7 +31,7 @@ times governed by the arrival rate function.
 # arrival_rate = 1 at time = 2.5 (linearity between time = 0 and time = 5), etc.
 >>> knots = {0: 1, 5: 2, 12: 0.3, 15: 0.3, 16: 0, 18: 0, 20: 2}
 
->>> arrs = nhpp.get_arrivals()
+>>> arrs = nhpp.get_arrivals(knots)
 
 # Print out our arrival times.
 >>> for arr in arrs:
