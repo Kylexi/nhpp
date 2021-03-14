@@ -3,7 +3,7 @@ import numpy as np
 """
 Author: Matthew Campbell
 Date of creation: 2/21/21
-Date last edited: 2/23/21
+Date last edited: 3/13/21
 
 PURPOSE: This package is (currently) a standalone module for
 generating non-homogeneous Poisson processes (nhpp).
@@ -20,10 +20,13 @@ LAMBDA(t) to a homogeneous Poisson process via an inversion function,
 or (2), use a "thinning" method which acts as an acceptance-rejection
 sampling routine.
 
-	The method get_arrivals employs the former approach. The input
-allows the user to specify a piecewise linear approximation to their
-true arrival rate function. Returned is a list containing the arrival
-times governed by the arrival rate function.
+	The method get_arrivals employs the former approach alone when
+no function parameter is passed, and a combination of the two approaches
+otherwise. The input allows the user to specify a piecewise linear 
+approximation to their true arrival rate function. If the true arrival
+rate function is known, then the piecewise linear function needs only
+to dominate it everywhere on the domain. Returned is a list containing
+the arrival times governed by the arrival rate function.
 
 EXAMPLE USAGE:
 # Specify the piecewise linear arrival rate via knots.
@@ -37,27 +40,19 @@ EXAMPLE USAGE:
 >>> for arr in arrs:
 		print(round(arr, 2))
 
-0
-0.08
-1.1
-1.14
-2.35
-2.41
-2.45
-2.91
-3.67
-4.41
-4.65
-4.7
-6.78
-7.13
-7.18
-8.12
-10.15
-18.33
-19.21
-19.53
-19.54
+###
+Example USAGE WITH FUNCTION:
+# Define knots of a dominating piecewise linear function:
+>>> knots = {0: 0, 2.5: 8, 5: 0}
+# Define true rate function (polynomial in our case):
+>>> def rate_function(t):
+		return t * (5 - t)
+
+>>> arrs = nhpp.get_arrivals(knots, rate_function)
+
+# Print out our arrival times.
+>>> for arr in arrs:
+		print(round(arr, 2))
 """
 
 def _get_piecewise_val(knots, t):
@@ -91,37 +86,77 @@ def _get_piecewise_val(knots, t):
 	return knot_vals[j] + s[j]*(t - knot_times[j])
 
 
-def get_arrivals(knots, func=None, *func_args, **func_kwargs):
+def _get_sorted_pairs(dic):
+	dic = {i: dic[i] for i in sorted(dic.keys())}
+
+	keys = list(dic.keys())
+	vals = list(dic.values())
+	return keys, vals
+
+def _get_rate_slopes(knot_vals, knot_times):
 	"""
-	Generate a sequence from nonhomogeneous Poisson process
-	specified by a piecewise linear function determine from
-	the knots parameter. The knots should specify the (domain, range)
-	pairings of each segment of the piecewise function.
+	Gets the slopes of each section of the rate function.
 
-	knots: dictionary where keys and values should all be numeric.
-
-	returns: list of floats
+	Note that we should be o.k. against division by zero,
+	but we'll raise an error just in case knot_times
+	somehow gets passed in manually.
 	"""
-	a = [0] # Arrival times for nonhomogeneous poisson process
-	u = [0] # Arrival times for homogeneous poisson process 
-	j = 0   # Counter to see which 'piece' of the integrated rate function we are in.
-	s = []  # Holds the slope between each knot
-	L = [0] # Holds values for integrated rate function.
+	if len(knot_times) != len(list(set(knot_times))):
+		raise ValueError("Cannot infer piecewise function from knots.")
+		
+	return [(knot_vals[i] - knot_vals[i-1]) / 
+			(knot_times[i] - knot_times[i-1]) for i in range(1, len(knot_times))]
 
-	knots = {i: knots[i] for i in sorted(knots.keys())}
 
-	knot_times = list(knots.keys())
-	knot_vals = list(knots.values())
-
+def _get_integrated_rate_values(knot_vals, knot_times):
+	L = [0]
 	for i in range(1, len(knot_times)):
 		L.append(L[-1] + 
 			0.5 * (knot_vals[i] + knot_vals[i-1]) * 
 			(knot_times[i] - knot_times[i-1])
 			)
-		s.append((knot_vals[i] - knot_vals[i-1]) / 
-			(knot_times[i] - knot_times[i-1]))
+	return L
 
-	def inv_int_rate_func(u, j):
+
+def _check_is_dict(a):
+	if type(a) != dict:
+		raise TypeError('Value passed must be a dictionary.')
+
+def _check_arrivals_positive(knot_vals):
+	for val in knot_vals:
+		if val < 0:
+			raise ValueError
+
+
+def get_arrivals(knots: dict, func=None, *func_args, **func_kwargs) -> list :
+	"""
+	Generate a sequence from a nonhomogeneous Poisson process
+	specified by a piecewise linear function determined from
+	the knots parameter. The knots should specify the (domain, range)
+	of each segment's knot.
+
+	knots: dictionary where keys and values should all be numeric.
+	func: function that takes a single float and returns a float.
+		Note that the function must be DOMINATED by the piecewise
+		linear knots, f(x) >= g(x), everywhere in the domain.
+
+	func_args: additional args to func
+	fung_kwargs: additional kwargs to func
+
+	returns: list of floats
+	"""
+	_check_is_dict(knots)
+
+	knot_times, knot_vals = _get_sorted_pairs(knots)
+
+	_check_arrivals_positive(knot_vals)
+
+	def _inv_int_rate_func(u, j):
+		"""
+		Inner function defined here due to its dependence
+		on the specific knots. Calculates the inverted
+		INTEGRATED rate function.
+		"""
 		res = 0
 		if s[j] != 0:
 			res = knot_times[j] + 2 * (u - L[j]) / (
@@ -129,9 +164,16 @@ def get_arrivals(knots, func=None, *func_args, **func_kwargs):
 					knot_vals[j]**2 + 2 * s[j] * (u - L[j])
 					)
 				)
-		else:
+		else: # Case when slope of rate is 0
 			res = knot_times[j] + (u - L[j]) / knot_vals[j]
 		return res
+
+	s = _get_rate_slopes(knot_vals, knot_times)
+	L = _get_integrated_rate_values(knot_vals, knot_times)
+
+	a = [0] # Arrival times for nonhomogeneous poisson process
+	u = [0] # Arrival times for homogeneous poisson process 
+	j = 0   # Counter to see which 'piece' of the integrated rate function we are in.
 
 	while True:
 		u_next = u[-1] + np.random.exponential(1.0)
@@ -139,12 +181,18 @@ def get_arrivals(knots, func=None, *func_args, **func_kwargs):
 			break
 		while L[j+1] < u_next and j < len(knot_times):
 			j += 1
-		a_next = inv_int_rate_func(u_next, j)
+		a_next = _inv_int_rate_func(u_next, j)
+		
 		if func:
+			# In this branch we reject a_next if an independently
+			# drawn uniform RV falls out of our acceptance region,
+			# i.e., the ratio of the smooth function and the
+			# piecewise approx.
+
 			ind_unif = np.random.uniform(0,1)
 			prob_ratio = func(a_next, *func_args, **func_kwargs) / _get_piecewise_val(knots, a_next)
 			if prob_ratio > 1:
-				print('issue')
+				raise ValueError('Piecewise function does not dominate smooth function.')
 			if ind_unif < prob_ratio:
 				a.append(a_next)
 			u.append(u_next)
@@ -152,10 +200,4 @@ def get_arrivals(knots, func=None, *func_args, **func_kwargs):
 		else:
 			a.append(a_next)
 			u.append(u_next)
-	return a
-
-# import math
-# knots = {0:3, math.pi/2: 9, math.pi: 3, 3*math.pi/2: 0, 2*math.pi: 3}
-# def test_func(t):
-# 	return 3*np.sin(t) + 3
-# print(get_arrivals(knots, test_func))
+	return a[1:]
